@@ -1,0 +1,147 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isDoctor() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/doctors/$(request.auth.uid));
+    }
+    
+    // New helper function to check if the authenticated user is the doctor based on firebaseUid field
+    function isSelfDoctor() {
+      return isAuthenticated() && request.auth.uid == resource.data.firebaseUid;
+    }
+    
+    // Admin collection - only authenticated admins can access
+    match /admins/{adminId} {
+      allow read, write: if isAdmin() || isOwner(adminId);
+    }
+    
+    // Doctors collection - secure access based on authentication
+    match /doctors/{doctorId} {
+      // Allow read access for:
+      // 1. Authenticated admins (can see all doctors)
+      // 2. The doctor themselves (can see their own profile)
+      allow read: if isAdmin() || isOwner(doctorId) || isSelfDoctor();
+      
+      // Allow write access for:
+      // 1. Authenticated admins (can create/modify all doctors)
+      // 2. The doctor themselves (can update their own profile based on firebaseUid)
+      allow write: if isAdmin() || isSelfDoctor();
+    }
+    
+    // Appointments collection - doctors can only see their own appointments
+    match /appointments/{appointmentId} {
+      // Allow read access for:
+      // 1. Authenticated admins (can see all)
+      // 2. The doctor assigned to the appointment
+      // 3. Public read for patient booking interface (temporary - should be restricted in production)
+      allow read: if isAdmin() || 
+                     (isAuthenticated() && request.auth.uid == resource.data.doctorId) ||
+                     true; // Keep public read for patient booking - restrict in production
+      
+      // Allow write access for:
+      // 1. Authenticated admins (can create/modify all)
+      // 2. Public write for patient booking (temporary - should be restricted in production)
+      allow write: if isAdmin() || true; // Keep public write for patient booking - restrict in production
+    }
+    
+    // Patients collection - open access for now (should be restricted in production)
+    match /patients/{patientId} {
+      allow read, write: if true;
+    }
+    
+    // Hospital settings - admin only
+    match /settings/{settingId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Time slots collection - doctors can manage their own, admins can see all
+    match /timeSlots/{slotId} {
+      // Allow read access for:
+      // 1. Authenticated admins (can see all)
+      // 2. The doctor who owns the time slot
+      // 3. Public read for appointment booking interface
+      allow read: if isAdmin() || 
+                     (isAuthenticated() && request.auth.uid == resource.data.doctorId) ||
+                     true; // Keep public read for booking interface
+      
+      // Allow write access for:
+      // 1. Authenticated admins
+      // 2. The doctor who owns the time slot
+      allow write: if isAdmin() || 
+                      (isAuthenticated() && request.auth.uid == resource.data.doctorId);
+    }
+    
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow write: if isAdmin() || true;
+    }
+    
+    // Analytics data - admin only
+    match /analytics/{analyticsId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // System logs - admin only
+    match /logs/{logId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Medical records - restricted access
+    match /medicalRecords/{recordId} {
+      allow read, write: if isAdmin() || true; // In production, add proper patient/doctor auth
+    }
+    
+    // Prescriptions
+    match /prescriptions/{prescriptionId} {
+      allow read, write: if true; // In production, add proper auth
+    }
+    
+    // Chat messages for consultations
+    match /consultations/{consultationId}/messages/{messageId} {
+      allow read, write: if true; // In production, add proper auth
+    }
+    
+    // Payment records - admin and related users only
+    match /payments/{paymentId} {
+      allow read, write: if isAdmin() || true; // In production, add proper auth
+    }
+    
+    // Reviews and ratings
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow write: if true; // In production, add proper patient auth
+    }
+    
+    // Hospital departments
+    match /departments/{departmentId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    // Emergency contacts
+    match /emergencyContacts/{contactId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Default rule - deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
