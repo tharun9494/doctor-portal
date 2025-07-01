@@ -17,6 +17,7 @@ interface TimeSlot {
   maxPatients: number;
   bookedPatients: number;
   type: 'in-person' | 'online';
+  meetingLink?: string;
 }
 
 const TimeSlots: React.FC = () => {
@@ -24,6 +25,7 @@ const TimeSlots: React.FC = () => {
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [editingSlot, setEditingSlot] = useState<TimeSlot | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -35,7 +37,8 @@ const TimeSlots: React.FC = () => {
     timingSlot: '',
     maxPatients: 1,
     type: 'in-person' as 'in-person' | 'online',
-    bookedPatients: 0
+    bookedPatients: 0,
+    meetingLink: '',
   });
 
   // Mock data for offline mode
@@ -46,7 +49,7 @@ const TimeSlots: React.FC = () => {
       date: new Date().toISOString().split('T')[0],
       startTime: '09:00 AM',
       endTime: '10:00 AM',
-      timingSlot: '',
+      timingSlot: 'Morning Session',
       isAvailable: true,
       maxPatients: 3,
       bookedPatients: 1,
@@ -58,11 +61,12 @@ const TimeSlots: React.FC = () => {
       date: new Date().toISOString().split('T')[0],
       startTime: '10:30 AM',
       endTime: '11:30 AM',
-      timingSlot: '',
+      timingSlot: 'Online Consultation',
       isAvailable: true,
       maxPatients: 2,
       bookedPatients: 0,
-      type: 'online'
+      type: 'online',
+      meetingLink: 'https://meet.google.com/abc-defg-hij'
     },
     {
       id: '3',
@@ -70,78 +74,125 @@ const TimeSlots: React.FC = () => {
       date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
       startTime: '02:00 PM',
       endTime: '03:00 PM',
-      timingSlot: '',
+      timingSlot: 'Afternoon Session',
       isAvailable: true,
       maxPatients: 4,
       bookedPatients: 2,
       type: 'in-person'
+    },
+    {
+      id: '4',
+      doctorId: doctorUser?.id || '1',
+      date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+      startTime: '04:00 PM',
+      endTime: '05:00 PM',
+      timingSlot: 'Evening Online',
+      isAvailable: true,
+      maxPatients: 3,
+      bookedPatients: 1,
+      type: 'online',
+      meetingLink: 'https://zoom.us/j/123456789'
     }
   ];
 
   // Helper functions for time format conversion
   const convertTo24Hour = (time12h: string): string => {
-    const [time, modifier] = time12h.split(' ');
-    let [hours, minutes] = time.split(':');
+    if (!time12h || !time12h.includes(' ')) return '00:00';
     
-    if (hours === '12') {
-      hours = modifier === 'PM' ? '12' : '00';
-    } else if (modifier === 'PM') {
-      hours = (parseInt(hours) + 12).toString();
+    try {
+      const [time, modifier] = time12h.split(' ');
+      let [hours, minutes] = time.split(':');
+      
+      if (!hours || !minutes || !modifier) return '00:00';
+      
+      if (hours === '12') {
+        hours = modifier === 'PM' ? '12' : '00';
+      } else if (modifier === 'PM') {
+        hours = (parseInt(hours) + 12).toString();
+      }
+      
+      return `${hours.padStart(2, '0')}:${minutes}`;
+    } catch (error) {
+      return '00:00';
     }
-    
-    return `${hours.padStart(2, '0')}:${minutes}`;
   };
 
   const convertTo12Hour = (time24h: string): string => {
-    const [hours, minutes] = time24h.split(':');
-    const hour = parseInt(hours);
-    const ampm = hour >= 12 ? 'PM' : 'AM';
-    const hour12 = hour % 12 || 12;
-    return `${hour12.toString().padStart(2, '0')}:${minutes} ${ampm}`;
+    if (!time24h || !time24h.includes(':')) return '12:00 AM';
+    
+    try {
+      const [hours, minutes] = time24h.split(':');
+      if (!hours || !minutes) return '12:00 AM';
+      
+      const hour = parseInt(hours);
+      if (isNaN(hour)) return '12:00 AM';
+      
+      const ampm = hour >= 12 ? 'PM' : 'AM';
+      const hour12 = hour % 12 || 12;
+      return `${hour12.toString().padStart(2, '0')}:${minutes} ${ampm}`;
+    } catch (error) {
+      return '12:00 AM';
+    }
   };
 
   // Calculate duration between two times
   const calculateDuration = (startTime: string, endTime: string): string => {
-    const start24 = convertTo24Hour(startTime);
-    const end24 = convertTo24Hour(endTime);
+    if (!startTime || !endTime) return 'Invalid time';
     
-    const [startHour, startMin] = start24.split(':').map(Number);
-    const [endHour, endMin] = end24.split(':').map(Number);
-    
-    let startTotal = startHour * 60 + startMin;
-    let endTotal = endHour * 60 + endMin;
-    
-    // Handle overnight (end time is next day)
-    if (endTotal < startTotal) {
-      endTotal += 24 * 60;
-    }
-    
-    const durationMinutes = endTotal - startTotal;
-    const hours = Math.floor(durationMinutes / 60);
-    const minutes = durationMinutes % 60;
-    
-    if (hours === 0) {
-      return `${minutes} min`;
-    } else if (minutes === 0) {
-      return `${hours} hr`;
-    } else {
-      return `${hours} hr ${minutes} min`;
+    try {
+      const start24 = convertTo24Hour(startTime);
+      const end24 = convertTo24Hour(endTime);
+      
+      const [startHour, startMin] = start24.split(':').map(Number);
+      const [endHour, endMin] = end24.split(':').map(Number);
+      
+      if (isNaN(startHour) || isNaN(startMin) || isNaN(endHour) || isNaN(endMin)) {
+        return 'Invalid time format';
+      }
+      
+      let startTotal = startHour * 60 + startMin;
+      let endTotal = endHour * 60 + endMin;
+      
+      // Handle overnight (end time is next day)
+      if (endTotal < startTotal) {
+        endTotal += 24 * 60;
+      }
+      
+      const durationMinutes = endTotal - startTotal;
+      const hours = Math.floor(durationMinutes / 60);
+      const minutes = durationMinutes % 60;
+      
+      if (hours === 0) {
+        return `${minutes} min`;
+      } else if (minutes === 0) {
+        return `${hours} hr`;
+      } else {
+        return `${hours} hr ${minutes} min`;
+      }
+    } catch (error) {
+      return 'Invalid time format';
     }
   };
 
   // Function to check if a time slot is in the past
   const isSlotInPast = (slot: TimeSlot): boolean => {
-    const today = new Date().toISOString().split('T')[0];
-    if (slot.date < today) return true;
+    if (!slot.date || !slot.startTime) return false;
     
-    if (slot.date === today) {
-      const now = new Date();
-      const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
-      const slotStartTime24 = convertTo24Hour(slot.startTime);
-      return slotStartTime24 < currentTime;
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      if (slot.date < today) return true;
+      
+      if (slot.date === today) {
+        const now = new Date();
+        const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+        const slotStartTime24 = convertTo24Hour(slot.startTime);
+        return slotStartTime24 < currentTime;
+      }
+      
+      return false;
+    } catch (error) {
+      return false;
     }
-    
-    return false;
   };
 
   // Function to clean up past time slots
@@ -197,27 +248,86 @@ const TimeSlots: React.FC = () => {
   const recalculateAvailability = (slots: TimeSlot[]): TimeSlot[] =>
     slots.map(slot => ({
       ...slot,
-      isAvailable: slot.bookedPatients < slot.maxPatients
+      bookedPatients: slot.bookedPatients || 0,
+      maxPatients: slot.maxPatients || 1,
+      isAvailable: (slot.bookedPatients || 0) < (slot.maxPatients || 1)
     }));
 
   // Update saveTimeSlots to always recalculate isAvailable
   const saveTimeSlots = async (newSlots: TimeSlot[]) => {
     if (!doctorUser) return;
     const recalculated = recalculateAvailability(newSlots);
+    
+    // Clean up any undefined values before saving to Firebase
+    const cleanedSlots = recalculated.map(slot => {
+      const cleanedSlot = { ...slot };
+      if (cleanedSlot.meetingLink === undefined) {
+        delete cleanedSlot.meetingLink;
+      }
+      return cleanedSlot;
+    });
+    
     if (!isFirebaseConnected()) {
-      setTimeSlots(recalculated);
+      setTimeSlots(cleanedSlots);
       setError('Changes saved locally. Will sync when connection is restored.');
       return;
     }
-    await updateDoc(doc(db, 'doctors', doctorUser.id), { timeSlots: recalculated });
-    setTimeSlots(recalculated);
+    await updateDoc(doc(db, 'doctors', doctorUser.id), { timeSlots: cleanedSlots });
+    setTimeSlots(cleanedSlots);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!doctorUser) return;
+    
+    // Validate form data
+    if (!formData.date || !formData.startTime || !formData.endTime) {
+      setError('Please fill in all required fields.');
+      return;
+    }
+    
+    if (formData.maxPatients < 1 || formData.maxPatients > 10) {
+      setError('Max patients must be between 1 and 10.');
+      setSuccessMessage(null);
+      return;
+    }
+    
+    if (formData.type === 'online') {
+      if (!formData.meetingLink.trim()) {
+        setError('Meeting link is required for online slots.');
+        setSuccessMessage(null);
+        return;
+      }
+      
+      // Validate URL format
+      try {
+        const url = new URL(formData.meetingLink);
+        if (!url.protocol.startsWith('http')) {
+          setError('Meeting link must be a valid URL starting with http:// or https://');
+          setSuccessMessage(null);
+          return;
+        }
+      } catch (error) {
+        setError('Please enter a valid meeting link URL.');
+        setSuccessMessage(null);
+        return;
+      }
+    }
+    
+    // Validate that end time is after start time
+    if (formData.startTime && formData.endTime) {
+      const start24 = convertTo24Hour(formData.startTime);
+      const end24 = convertTo24Hour(formData.endTime);
+      if (start24 >= end24) {
+        setError('End time must be after start time.');
+        setSuccessMessage(null);
+        return;
+      }
+    }
+    
     setLoading(true);
     setError(null);
+    setSuccessMessage(null);
     try {
       let newSlots: TimeSlot[];
       if (editingSlot) {
@@ -229,10 +339,11 @@ const TimeSlots: React.FC = () => {
             startTime: formData.startTime,
             endTime: formData.endTime,
             timingSlot: formData.timingSlot,
-            maxPatients: formData.maxPatients,
+            maxPatients: formData.maxPatients || 1,
             type: formData.type,
-            bookedPatients: formData.bookedPatients,
-            isAvailable: formData.bookedPatients < formData.maxPatients
+            bookedPatients: formData.bookedPatients || 0,
+            isAvailable: (formData.bookedPatients || 0) < (formData.maxPatients || 1),
+            ...(formData.type === 'online' && formData.meetingLink ? { meetingLink: formData.meetingLink } : {})
           } : slot
         );
       } else {
@@ -244,10 +355,11 @@ const TimeSlots: React.FC = () => {
           startTime: formData.startTime,
           endTime: formData.endTime,
           timingSlot: formData.timingSlot,
-          isAvailable: formData.bookedPatients < formData.maxPatients,
-          maxPatients: formData.maxPatients,
-          bookedPatients: formData.bookedPatients,
-          type: formData.type
+          isAvailable: (formData.bookedPatients || 0) < (formData.maxPatients || 1),
+          maxPatients: formData.maxPatients || 1,
+          bookedPatients: formData.bookedPatients || 0,
+          type: formData.type,
+          ...(formData.type === 'online' && formData.meetingLink ? { meetingLink: formData.meetingLink } : {})
         };
         newSlots = [...timeSlots, newSlot];
       }
@@ -268,10 +380,11 @@ const TimeSlots: React.FC = () => {
       date: slot.date,
       startTime: slot.startTime,
       endTime: slot.endTime,
-      timingSlot: slot.timingSlot,
-      maxPatients: slot.maxPatients,
+      timingSlot: slot.timingSlot || generateTimingSlot(slot.endTime),
+      maxPatients: slot.maxPatients || 1,
       type: slot.type,
-      bookedPatients: slot.bookedPatients
+      bookedPatients: slot.bookedPatients || 0,
+      meetingLink: slot.meetingLink || '',
     });
     setShowModal(true);
   };
@@ -296,8 +409,9 @@ const TimeSlots: React.FC = () => {
       endTime: '',
       timingSlot: '',
       maxPatients: 1,
-      type: 'in-person',
-      bookedPatients: 0
+      type: 'in-person' as 'in-person' | 'online',
+      bookedPatients: 0,
+      meetingLink: '',
     });
     setEditingSlot(null);
   };
@@ -349,6 +463,22 @@ const TimeSlots: React.FC = () => {
     }
   };
 
+  // Generate timing slot based on end time
+  const generateTimingSlot = (endTime: string): string => {
+    if (!endTime) return '';
+    
+    const end24 = convertTo24Hour(endTime);
+    const [hours] = end24.split(':').map(Number);
+    
+    if (hours < 12) {
+      return `Morning Session (Ends at ${endTime})`;
+    } else if (hours < 17) {
+      return `Afternoon Session (Ends at ${endTime})`;
+    } else {
+      return `Evening Session (Ends at ${endTime})`;
+    }
+  };
+
   // Generate time options for 12-hour format
   const generateTimeOptions = () => {
     const options = [];
@@ -363,6 +493,30 @@ const TimeSlots: React.FC = () => {
   };
 
   const timeOptions = generateTimeOptions();
+
+  // Function to generate a sample meeting link for testing
+  const generateSampleMeetingLink = () => {
+    const platforms = [
+      'https://meet.google.com/abc-defg-hij',
+      'https://zoom.us/j/123456789',
+      'https://teams.microsoft.com/l/meetup-join/123456789',
+      'https://us02web.zoom.us/j/987654321'
+    ];
+    return platforms[Math.floor(Math.random() * platforms.length)];
+  };
+
+  // Function to copy meeting link to clipboard
+  const copyMeetingLink = async (link: string) => {
+    try {
+      await navigator.clipboard.writeText(link);
+      setSuccessMessage('Meeting link copied to clipboard!');
+      // Clear the success message after 3 seconds
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error) {
+      console.error('Failed to copy meeting link:', error);
+      setError('Failed to copy meeting link to clipboard.');
+    }
+  };
 
   if (loading && timeSlots.length === 0) {
     return (
@@ -385,7 +539,18 @@ const TimeSlots: React.FC = () => {
             className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg flex items-center"
           >
             <AlertCircle className="w-5 h-5 mr-2" />
-            <span className="text-sm">{error}</span>
+            <span className="text-xs">{error}</span>
+          </motion.div>
+        )}
+
+        {/* Success Message */}
+        {successMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg flex items-center"
+          >
+            <span className="text-xs">{successMessage}</span>
           </motion.div>
         )}
 
@@ -393,7 +558,7 @@ const TimeSlots: React.FC = () => {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div className="flex items-center space-x-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-xs font-medium text-gray-700 mb-2">
                 Select Date
               </label>
               <input
@@ -410,7 +575,7 @@ const TimeSlots: React.FC = () => {
             className="bg-gradient-to-r from-blue-600 to-teal-600 text-white px-6 py-2 rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition-all duration-300 flex items-center space-x-2"
           >
             <Plus size={20} />
-            <span>Add Time Slot</span>
+            <span className="text-sm">Add Time Slot</span>
           </button>
         </div>
 
@@ -421,7 +586,7 @@ const TimeSlots: React.FC = () => {
               key={slot.id}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className={`bg-white rounded-2xl shadow-lg p-6 border-l-4 ${
+              className={`bg-white rounded-2xl shadow-lg p-4 border-l-4 ${
                 slot.isAvailable ? 'border-green-500' : 'border-red-500'
               }`}
             >
@@ -429,31 +594,40 @@ const TimeSlots: React.FC = () => {
                 <div className="flex items-center space-x-2">
                   <Clock className="w-5 h-5 text-gray-500" />
                   <div>
-                    <span className="font-semibold text-gray-900 text-lg">
+                    <span className="font-semibold text-gray-900 text-sm">
                       {slot.startTime} - {slot.endTime}
                     </span>
-                    <div className="text-sm text-gray-600 mt-1">
+                    <div className="text-xs text-gray-600 mt-1">
                       Duration: {calculateDuration(slot.startTime, slot.endTime)}
                     </div>
                   </div>
                 </div>
-                <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getTypeColor(slot.type)}`}>
-                  {slot.type}
-                </span>
+                <div className="flex flex-col items-end space-y-1">
+                  <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getTypeColor(slot.type)}`}>
+                    {slot.type}
+                  </span>
+                  {slot.type === 'online' && slot.meetingLink && (
+                    <span className="px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
+                      Link Ready
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-2 mb-4">
                 {slot.timingSlot && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Timing:</span>
-                    <span className="font-medium text-blue-600">{slot.timingSlot}</span>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-blue-700">Timing Slot:</span>
+                      <span className="text-xs font-semibold text-blue-800">{slot.timingSlot}</span>
+                    </div>
                   </div>
                 )}
-                <div className="flex justify-between text-sm">
+                <div className="flex justify-between text-xs">
                   <span className="text-gray-600">Capacity:</span>
                   <span className="font-medium">{slot.bookedPatients}/{slot.maxPatients}</span>
                 </div>
-                <div className="flex justify-between text-sm">
+                <div className="flex justify-between text-xs">
                   <span className="text-gray-600">Status:</span>
                   <span className={`font-medium ${
                     slot.bookedPatients < slot.maxPatients ? 'text-green-600' : 'text-red-600'
@@ -461,6 +635,31 @@ const TimeSlots: React.FC = () => {
                     {slot.bookedPatients < slot.maxPatients ? 'Available' : 'Unavailable'}
                   </span>
                 </div>
+                {slot.type === 'online' && slot.meetingLink && (
+                  <div className="mt-3 p-2 bg-blue-50 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xs font-medium text-blue-700">Meeting Link:</span>
+                        <a
+                          href={slot.meetingLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-blue-600 hover:text-blue-800 underline truncate"
+                          title={slot.meetingLink}
+                        >
+                          {slot.meetingLink.length > 30 ? `${slot.meetingLink.substring(0, 30)}...` : slot.meetingLink}
+                        </a>
+                      </div>
+                      <button
+                        onClick={() => copyMeetingLink(slot.meetingLink!)}
+                        className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-100 transition-colors"
+                        title="Copy meeting link"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-between">
@@ -486,8 +685,8 @@ const TimeSlots: React.FC = () => {
         {filteredSlots.length === 0 && (
           <div className="text-center py-12">
             <Calendar className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">No time slots for this date</h3>
-            <p className="text-gray-600 mb-4">Create your first time slot to start accepting appointments.</p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">No time slots for this date</h3>
+            <p className="text-sm text-gray-600 mb-4">Create your first time slot to start accepting appointments.</p>
             <button
               onClick={handleNewSlot}
               className="bg-gradient-to-r from-blue-600 to-teal-600 text-white px-6 py-2 rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition-all duration-300"
@@ -503,10 +702,10 @@ const TimeSlots: React.FC = () => {
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="bg-white rounded-2xl p-6 w-full max-w-md"
+              className="bg-white rounded-2xl p-4 w-full max-w-md"
             >
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-900">
+                <h2 className="text-lg font-bold text-gray-900">
                   {editingSlot ? 'Edit Time Slot' : 'Add New Time Slot'}
                 </h2>
                 <button
@@ -519,7 +718,7 @@ const TimeSlots: React.FC = () => {
               
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-2">
                     Date
                   </label>
                   <input
@@ -534,7 +733,7 @@ const TimeSlots: React.FC = () => {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-xs font-medium text-gray-700 mb-2">
                       Start Time
                     </label>
                     <select
@@ -553,12 +752,19 @@ const TimeSlots: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-xs font-medium text-gray-700 mb-2">
                       End Time
                     </label>
                     <select
                       value={formData.endTime}
-                      onChange={(e) => setFormData({...formData, endTime: e.target.value})}
+                      onChange={(e) => {
+                        const newEndTime = e.target.value;
+                        setFormData({
+                          ...formData,
+                          endTime: newEndTime,
+                          timingSlot: generateTimingSlot(newEndTime)
+                        });
+                      }}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       required
                     >
@@ -573,26 +779,33 @@ const TimeSlots: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Timing Slot (Optional)
+                  <label className="block text-xs font-medium text-gray-700 mb-2">
+                    Timing Slot (Auto-generated from End Time)
                   </label>
                   <input
                     type="text"
                     value={formData.timingSlot}
                     onChange={(e) => setFormData({...formData, timingSlot: e.target.value})}
-                    placeholder="e.g., Morning, Afternoon, Evening, or specific timing notes"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Will be auto-generated based on end time"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50"
+                    readOnly
                   />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Timing slot will be automatically set based on your end time selection
+                  </p>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-2">
                     Max Patients
                   </label>
                   <input
                     type="number"
-                    value={formData.maxPatients}
-                    onChange={(e) => setFormData({...formData, maxPatients: parseInt(e.target.value)})}
+                    value={formData.maxPatients || ''}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value);
+                      setFormData({...formData, maxPatients: isNaN(value) ? 1 : value});
+                    }}
                     min="1"
                     max="10"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -600,19 +813,59 @@ const TimeSlots: React.FC = () => {
                   />
                 </div>
 
+                {/* Hidden field for bookedPatients - managed internally */}
+                <input
+                  type="hidden"
+                  value={formData.bookedPatients || 0}
+                  onChange={(e) => {
+                    const value = parseInt(e.target.value);
+                    setFormData({...formData, bookedPatients: isNaN(value) ? 0 : value});
+                  }}
+                />
+
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-2">
                     Consultation Type
                   </label>
                   <select
                     value={formData.type}
-                    onChange={(e) => setFormData({...formData, type: e.target.value as 'in-person' | 'online'})}
+                    onChange={(e) => {
+                      const newType = e.target.value as 'in-person' | 'online';
+                      setFormData({
+                        ...formData, 
+                        type: newType,
+                        // Clear meeting link when switching to in-person
+                        meetingLink: newType === 'in-person' ? '' : formData.meetingLink
+                      });
+                    }}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
                     <option value="in-person">In-person Only</option>
                     <option value="online">Online Only</option>
                   </select>
                 </div>
+
+                {formData.type === 'online' && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-2">
+                      Meeting Link <span className="text-red-500">*</span>
+                    </label>
+                    <div className="flex space-x-2">
+                      <input
+                        type="url"
+                        value={formData.meetingLink}
+                        onChange={(e) => setFormData({...formData, meetingLink: e.target.value})}
+                        placeholder="https://meet.google.com/abc-defg-hij or https://zoom.us/j/123456789"
+                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        required={formData.type === 'online'}
+                      />
+                      
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Enter a valid meeting link for online consultation(google meet)
+                    </p>
+                  </div>
+                )}
 
                 <div className="flex justify-end space-x-4 pt-6">
                   <button
@@ -628,7 +881,7 @@ const TimeSlots: React.FC = () => {
                     className="px-6 py-2 bg-gradient-to-r from-blue-600 to-teal-600 text-white rounded-lg hover:shadow-lg transform hover:scale-105 transition-all duration-300 disabled:opacity-50 flex items-center space-x-2"
                   >
                     <Save size={16} />
-                    <span>{loading ? 'Saving...' : editingSlot ? 'Update' : 'Create'}</span>
+                    <span className="text-xs">{loading ? 'Saving...' : editingSlot ? 'Update' : 'Create'}</span>
                   </button>
                 </div>
               </form>

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { User, Mail, Phone, MapPin, Save, Edit, Camera, Stethoscope, Award, Clock, AlertCircle, Plus, Trash2, Navigation, Globe, CheckCircle } from 'lucide-react';
+import { User, Mail, Phone, MapPin, Save, Edit, Camera, Stethoscope, Award, Clock, AlertCircle, Plus, Trash2, Navigation, Globe, CheckCircle, X } from 'lucide-react';
 import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
 import { db, isFirebaseConnected } from '../../firebase/firebase';
 import { useDoctorAuth } from '../../contexts/DoctorAuthContext';
 import DoctorLayout from '../../components/doctor/DoctorLayout';
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 interface Address {
   street: string;
@@ -34,8 +35,8 @@ interface DoctorProfile {
   languages: string[];
   consultationFee?: number;
   availability?: {
-    days: string[];
-    hours: string;
+    days?: string[];
+    hours?: string;
   };
   profileImage?: string;
   status: 'active' | 'inactive';
@@ -54,6 +55,8 @@ const DoctorProfile: React.FC = () => {
   const [newEducation, setNewEducation] = useState('');
   const [newCertification, setNewCertification] = useState('');
   const [newLanguage, setNewLanguage] = useState('');
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
 
   // Mock profile data for offline mode
   const mockProfile: DoctorProfile = {
@@ -116,12 +119,23 @@ const DoctorProfile: React.FC = () => {
       
       if (profileDoc.exists()) {
         const profileData = profileDoc.data() as DoctorProfile;
+        let days: string[] = ['Monday'];
+        let hours: string = '9:00 AM - 5:00 PM';
+        if (profileData.availability) {
+          if (Array.isArray(profileData.availability.days) && profileData.availability.days.length > 0) {
+            days = profileData.availability.days;
+          }
+          if (typeof profileData.availability.hours === 'string' && profileData.availability.hours.length > 0) {
+            hours = profileData.availability.hours;
+          }
+        }
         setProfile({
           ...profileData,
           education: profileData.education || [],
           certifications: profileData.certifications || [],
           languages: profileData.languages || ['English'],
-          address: profileData.address || mockProfile.address
+          address: profileData.address || mockProfile.address,
+          availability: { days, hours },
         });
       } else {
         // Create profile with default data
@@ -168,7 +182,8 @@ const DoctorProfile: React.FC = () => {
         id: doctorUser.id,
         name: profile.name,
         specialization: profile.specialization,
-        email: profile.email
+        email: profile.email,
+        profileImage: profile.profileImage
       });
 
       setSuccess('Profile updated successfully!');
@@ -305,6 +320,122 @@ const DoctorProfile: React.FC = () => {
     fetchProfile(); // Reload original data
   };
 
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || !profile || !doctorUser) return;
+    
+    const file = e.target.files[0];
+    
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      setError('Please select a valid image file (JPEG, PNG, etc.)');
+      return;
+    }
+    
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Image size should be less than 5MB');
+      return;
+    }
+    
+    setImageFile(file);
+    setImageUploading(true);
+    setError(null);
+    setSuccess(null);
+    
+    try {
+      if (!isFirebaseConnected()) {
+        setError('Unable to upload image. Please check your internet connection.');
+        return;
+      }
+
+      const storage = getStorage();
+      const imgRef = storageRef(storage, `doctor-profiles/${doctorUser.id}/${Date.now()}_${file.name}`);
+      
+      // Upload the file
+      const uploadResult = await uploadBytes(imgRef, file);
+      
+      // Get the download URL
+      const url = await getDownloadURL(uploadResult.ref);
+      
+      // Update profile with new image URL
+      setProfile({ ...profile, profileImage: url });
+      
+      // Save the updated profile to Firestore
+      const updateData = {
+        ...profile,
+        profileImage: url,
+        firebaseUid: doctorUser.id,
+        updatedAt: new Date()
+      };
+      
+      await setDoc(doc(db, 'doctors', doctorUser.id), updateData, { merge: true });
+      
+      // Update the doctor context with new image
+      loginDoctor({
+        id: doctorUser.id,
+        name: doctorUser.name,
+        specialization: doctorUser.specialization,
+        email: doctorUser.email,
+        profileImage: url
+      });
+      
+      setSuccess('Profile image uploaded successfully!');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      console.error('Error uploading image:', err);
+      if (err.code === 'storage/unauthorized') {
+        setError('Permission denied. Please contact administrator.');
+      } else if (err.code === 'storage/quota-exceeded') {
+        setError('Storage quota exceeded. Please try a smaller image.');
+      } else {
+        setError('Failed to upload image. Please try again.');
+      }
+    } finally {
+      setImageUploading(false);
+      setImageFile(null);
+    }
+  };
+
+  const removeProfileImage = async () => {
+    if (!profile || !doctorUser) return;
+    
+    setImageUploading(true);
+    setError(null);
+    setSuccess(null);
+    
+    try {
+      // Update profile to remove image URL
+      const updateData = {
+        ...profile,
+        profileImage: null,
+        firebaseUid: doctorUser.id,
+        updatedAt: new Date()
+      };
+      
+      await setDoc(doc(db, 'doctors', doctorUser.id), updateData, { merge: true });
+      
+      // Update local state
+      setProfile({ ...profile, profileImage: undefined });
+      
+      // Update the doctor context
+      loginDoctor({
+        id: doctorUser.id,
+        name: doctorUser.name,
+        specialization: doctorUser.specialization,
+        email: doctorUser.email,
+        profileImage: undefined
+      });
+      
+      setSuccess('Profile image removed successfully!');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      console.error('Error removing image:', err);
+      setError('Failed to remove profile image. Please try again.');
+    } finally {
+      setImageUploading(false);
+    }
+  };
+
   if (loading) {
     return (
       <DoctorLayout title="Profile">
@@ -360,12 +491,42 @@ const DoctorProfile: React.FC = () => {
         >
           <div className="flex flex-col md:flex-row items-center space-y-4 md:space-y-0 md:space-x-6">
             <div className="relative">
-              <div className="w-32 h-32 bg-gradient-to-r from-blue-600 to-teal-600 rounded-full flex items-center justify-center">
+              {profile.profileImage ? (
+                <img
+                  src={profile.profileImage}
+                  alt="Profile"
+                  className="w-32 h-32 rounded-full object-cover border-4 border-blue-200 shadow-lg"
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.style.display = 'none';
+                    target.nextElementSibling?.classList.remove('hidden');
+                  }}
+                />
+              ) : null}
+              <div className={`w-32 h-32 bg-gradient-to-r from-blue-600 to-teal-600 rounded-full flex items-center justify-center ${profile.profileImage ? 'hidden' : ''}`}>
                 <Stethoscope className="w-16 h-16 text-white" />
               </div>
               {isEditing && (
-                <button className="absolute bottom-0 right-0 bg-white p-2 rounded-full shadow-lg hover:shadow-xl transition-shadow">
+                <label className="absolute bottom-0 right-0 bg-white p-2 rounded-full shadow-lg hover:shadow-xl transition-shadow cursor-pointer">
                   <Camera className="w-5 h-5 text-gray-600" />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleImageChange}
+                    disabled={imageUploading}
+                  />
+                </label>
+              )}
+              
+              {isEditing && profile.profileImage && (
+                <button
+                  onClick={removeProfileImage}
+                  disabled={imageUploading}
+                  className="absolute top-0 right-0 bg-red-600 text-white p-2 rounded-full cursor-pointer hover:bg-red-700 transition-colors shadow-lg"
+                  title="Remove profile image"
+                >
+                  <X className="w-4 h-4" />
                 </button>
               )}
             </div>
@@ -874,6 +1035,73 @@ const DoctorProfile: React.FC = () => {
             ))}
             {profile.languages.length === 0 && (
               <p className="text-gray-500 text-center py-4 w-full">No languages added</p>
+            )}
+          </div>
+        </motion.div>
+
+        {/* Profile Image */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.6 }}
+          className="bg-white rounded-2xl shadow-lg p-8"
+        >
+          <h3 className="text-2xl font-bold text-gray-900 mb-6">Profile Image</h3>
+          
+          <div className="flex flex-col items-center">
+            <div className="relative w-32 h-32 mb-4">
+              {profile.profileImage ? (
+                <img
+                  src={profile.profileImage}
+                  alt="Profile"
+                  className="w-32 h-32 rounded-full object-cover border-4 border-blue-200 shadow-lg"
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.src = '/default-profile.png';
+                  }}
+                />
+              ) : (
+                <div className="w-32 h-32 bg-gradient-to-r from-blue-600 to-teal-600 rounded-full flex items-center justify-center border-4 border-blue-200 shadow-lg">
+                  <Stethoscope className="w-16 h-16 text-white" />
+                </div>
+              )}
+              
+              {isEditing && (
+                <label className="absolute bottom-0 right-0 bg-blue-600 text-white p-2 rounded-full cursor-pointer hover:bg-blue-700 transition-colors shadow-lg">
+                  <Camera className="w-5 h-5" />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleImageChange}
+                    disabled={imageUploading}
+                  />
+                </label>
+              )}
+            </div>
+            
+            {imageUploading && (
+              <div className="flex items-center space-x-2 text-blue-600 text-sm mb-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                <span>Uploading image...</span>
+              </div>
+            )}
+            
+            {isEditing && (
+              <div className="text-center">
+                <p className="text-sm text-gray-600 mb-2">
+                  Click the camera icon to upload a new profile image
+                </p>
+                <p className="text-xs text-gray-500">
+                  Supported formats: JPEG, PNG, GIF (Max size: 5MB)
+                </p>
+              </div>
+            )}
+            
+            {!isEditing && !profile.profileImage && (
+              <p className="text-sm text-gray-500 text-center">
+                No profile image uploaded
+              </p>
             )}
           </div>
         </motion.div>

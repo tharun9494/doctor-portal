@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { Menu, X, Bell, Search } from 'lucide-react';
+import { Menu, X, Bell, Search, User } from 'lucide-react';
 import DoctorSidebar from './DoctorSidebar';
+import { useDoctorAuth } from '../../contexts/DoctorAuthContext';
+import { useAppointmentCounts } from '../../hooks/useAppointmentCounts';
 
 interface DoctorLayoutProps {
   children: React.ReactNode;
@@ -9,6 +11,8 @@ interface DoctorLayoutProps {
 
 const DoctorLayout: React.FC<DoctorLayoutProps> = ({ children, title }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { doctorUser } = useDoctorAuth();
+  const { counts } = useAppointmentCounts();
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -54,25 +58,43 @@ const DoctorLayout: React.FC<DoctorLayoutProps> = ({ children, title }) => {
               <div className="hidden xl:flex items-center space-x-6">
                 <div className="text-center">
                   <p className="text-sm font-medium text-gray-900">Today</p>
-                  <p className="text-xs text-gray-500">8 appointments</p>
+                  <p className="text-xs text-gray-500">{counts.today} appointments</p>
                 </div>
                 <div className="text-center">
                   <p className="text-sm font-medium text-gray-900">Status</p>
-                  <p className="text-xs text-green-600">Available</p>
+                  <p className={`text-xs ${counts.today > 0 ? 'text-blue-600' : 'text-green-600'}`}>
+                    {counts.today > 0 ? `${counts.today} scheduled` : 'Available'}
+                  </p>
                 </div>
               </div>
 
               {/* Notifications */}
               <button className="relative p-2 rounded-lg hover:bg-gray-100 transition-colors">
                 <Bell size={20} className="text-gray-600" />
-                <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-                  3
-                </span>
+                {counts.notifications > 0 && (
+                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
+                    {counts.notifications}
+                  </span>
+                )}
               </button>
 
               {/* Profile Avatar */}
-              <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-teal-600 rounded-full flex items-center justify-center">
-                <span className="text-white font-semibold text-sm">DR</span>
+              <div className="relative">
+                {doctorUser?.profileImage ? (
+                  <img
+                    src={doctorUser.profileImage}
+                    alt="Profile"
+                    className="w-10 h-10 rounded-full object-cover border-2 border-gray-200"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement;
+                      target.style.display = 'none';
+                      target.nextElementSibling?.classList.remove('hidden');
+                    }}
+                  />
+                ) : null}
+                <div className={`w-10 h-10 bg-gradient-to-r from-blue-600 to-teal-600 rounded-full flex items-center justify-center ${doctorUser?.profileImage ? 'hidden' : ''}`}>
+                  <User className="w-5 h-5 text-white" />
+                </div>
               </div>
             </div>
           </div>

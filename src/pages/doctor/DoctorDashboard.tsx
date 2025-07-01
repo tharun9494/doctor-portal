@@ -1,120 +1,54 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Calendar, Users, Video, Clock, TrendingUp, CheckCircle, AlertCircle, Activity, Heart, ArrowUp, ArrowDown } from 'lucide-react';
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { db, isFirebaseConnected } from '../../firebase/firebase';
 import { useDoctorAuth } from '../../contexts/DoctorAuthContext';
+import { useAppointmentCounts } from '../../hooks/useAppointmentCounts';
 import DoctorLayout from '../../components/doctor/DoctorLayout';
 import { Line, Doughnut } from 'react-chartjs-2';
+import { useNavigate } from 'react-router-dom';
 
 const DoctorDashboard: React.FC = () => {
   const { doctorUser } = useDoctorAuth();
-  const [stats, setStats] = useState({
-    todayAppointments: 0,
-    totalPatients: 0,
-    onlineConsultations: 0,
-    completedAppointments: 0
-  });
-  const [loading, setLoading] = useState(true);
+  const { appointments, counts, loading, error: hookError } = useAppointmentCounts();
   const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
 
-  // Mock data for offline mode
-  
-  useEffect(() => {
-    const fetchStats = async () => {
-      if (!doctorUser) return;
-
-      try {
-        setError(null);
-        
-        if (!isFirebaseConnected()) {
-          setError('Operating in offline mode. Showing sample data.');
-          setStats(mockStats);
-          return;
-        }
-
-        // Fetch appointments for this doctor
-        const appointmentsQuery = query(
-          collection(db, 'appointments'),
-          where('doctorId', '==', doctorUser.id)
-        );
-        const appointmentsSnapshot = await getDocs(appointmentsQuery);
-        const appointments = appointmentsSnapshot.docs.map(doc => doc.data());
-
-        // Calculate today's appointments
-        const today = new Date().toDateString();
-        const todayAppointments = appointments.filter(apt => 
-          new Date(apt.date?.toDate()).toDateString() === today
-        ).length;
-
-        // Calculate other stats
-        const onlineConsultations = appointments.filter(apt => apt.type === 'online').length;
-        const completedAppointments = appointments.filter(apt => apt.status === 'completed').length;
-        const uniquePatients = new Set(appointments.map(apt => apt.patientId)).size;
-
-        setStats({
-          todayAppointments: todayAppointments || mockStats.todayAppointments,
-          totalPatients: uniquePatients || mockStats.totalPatients,
-          onlineConsultations: onlineConsultations || mockStats.onlineConsultations,
-          completedAppointments: completedAppointments || mockStats.completedAppointments
-        });
-      } catch (error) {
-        console.error('Error fetching stats:', error);
-        setError('Unable to load dashboard data. Showing sample data.');
-        setStats(mockStats);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchStats();
-  }, [doctorUser]);
-
-  const statCards = [
-    {
-      title: 'Today\'s Appointments',
-      value: stats.todayAppointments,
-      icon: Calendar,
-      color: 'from-blue-500 to-blue-600',
-      bgColor: 'bg-blue-50',
-      change: '+12%',
-      changeType: 'positive'
-    },
-    {
-      title: 'Total Patients',
-      value: stats.totalPatients,
-      icon: Users,
-      color: 'from-green-500 to-green-600',
-      bgColor: 'bg-green-50',
-      change: '+8%',
-      changeType: 'positive'
-    },
-    {
-      title: 'Online Consultations',
-      value: stats.onlineConsultations,
-      icon: Video,
-      color: 'from-purple-500 to-purple-600',
-      bgColor: 'bg-purple-50',
-      change: '+23%',
-      changeType: 'positive'
-    },
-    {
-      title: 'Completed Today',
-      value: stats.completedAppointments,
-      icon: CheckCircle,
-      color: 'from-teal-500 to-teal-600',
-      bgColor: 'bg-teal-50',
-      change: '+5%',
-      changeType: 'positive'
+  // Helper to robustly get a date string from Firestore Timestamp, string, Date, or undefined
+  const getDateString = (dateValue: any) => {
+    if (!dateValue) return null;
+    if (typeof dateValue.toDate === 'function') {
+      return dateValue.toDate().toDateString();
     }
-  ];
+    try {
+      return new Date(dateValue).toDateString();
+    } catch {
+      return null;
+    }
+  };
 
+  const today = new Date().toDateString();
+  const todaysAppointments = appointments
+    .filter(apt => getDateString(apt.date) === today)
+    .sort((a, b) => {
+      const aTime = a.timeSlot || (a.date && new Date(a.date).getTime()) || 0;
+      const bTime = b.timeSlot || (b.date && new Date(b.date).getTime()) || 0;
+      return aTime - bTime;
+    });
+
+  const daysOfWeek = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    return d;
+  });
+  
   const appointmentTrendsData = {
-    labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    labels: daysOfWeek.map(d => d.toLocaleDateString('en-US', { weekday: 'short' })),
     datasets: [
       {
         label: 'Appointments',
-        data: [12, 15, 8, 20, 18, 10, 6],
+        data: daysOfWeek.map(day =>
+          appointments.filter(apt => getDateString(apt.date) === day.toDateString()).length
+        ),
         borderColor: 'rgb(59, 130, 246)',
         backgroundColor: 'rgba(59, 130, 246, 0.1)',
         tension: 0.4,
@@ -123,20 +57,67 @@ const DoctorDashboard: React.FC = () => {
     ],
   };
 
+  const typeCounts: Record<string, number> = {};
+  appointments.forEach(apt => {
+    const type = apt.type || 'Unknown';
+    typeCounts[type] = (typeCounts[type] || 0) + 1;
+  });
+  
   const patientTypeData = {
-    labels: ['New Patients', 'Follow-up', 'Emergency'],
+    labels: Object.keys(typeCounts),
     datasets: [
       {
-        data: [45, 35, 20],
+        data: Object.values(typeCounts),
         backgroundColor: [
           'rgba(59, 130, 246, 0.8)',
           'rgba(16, 185, 129, 0.8)',
           'rgba(239, 68, 68, 0.8)',
+          'rgba(251, 191, 36, 0.8)',
+          'rgba(168, 85, 247, 0.8)',
         ],
         borderWidth: 0,
       },
     ],
   };
+
+  const statCards = [
+    {
+      title: 'Today\'s Appointments',
+      value: counts.today,
+      icon: Calendar,
+      color: 'from-blue-500 to-blue-600',
+      bgColor: 'bg-blue-50',
+      change: '+12%',
+      changeType: 'positive'
+    },
+    {
+      title: 'Total Patients',
+      value: new Set(appointments.map(apt => apt.patientId)).size,
+      icon: Users,
+      color: 'from-green-500 to-green-600',
+      bgColor: 'bg-green-50',
+      change: '+8%',
+      changeType: 'positive'
+    },
+    {
+      title: 'Online Consultations',
+      value: appointments.filter(apt => apt.type === 'online').length,
+      icon: Video,
+      color: 'from-purple-500 to-purple-600',
+      bgColor: 'bg-purple-50',
+      change: '+23%',
+      changeType: 'positive'
+    },
+    {
+      title: 'Completed Today',
+      value: counts.completed,
+      icon: CheckCircle,
+      color: 'from-teal-500 to-teal-600',
+      bgColor: 'bg-teal-50',
+      change: '+5%',
+      changeType: 'positive'
+    }
+  ];
 
   if (loading) {
     return (
@@ -152,14 +133,14 @@ const DoctorDashboard: React.FC = () => {
     <DoctorLayout title="Dashboard">
       <div className="space-y-8">
         {/* Error Message */}
-        {error && (
+        {(error || hookError) && (
           <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg flex items-center"
           >
             <AlertCircle className="w-5 h-5 mr-2" />
-            <span className="text-sm">{error}</span>
+            <span className="text-sm">{error || hookError}</span>
           </motion.div>
         )}
 
@@ -177,7 +158,7 @@ const DoctorDashboard: React.FC = () => {
                   Welcome back, Dr. {doctorUser?.name}!
                 </h2>
                 <p className="text-blue-100 text-lg">
-                  You have {stats.todayAppointments} appointments scheduled for today.
+                  You have {counts.today} appointments scheduled for today.
                 </p>
                 <div className="flex flex-wrap items-center gap-6 mt-4">
                   <div className="flex items-center space-x-2">
@@ -327,34 +308,33 @@ const DoctorDashboard: React.FC = () => {
               </span>
             </div>
             <div className="space-y-4">
-              {[
-                { time: '09:00 AM', patient: 'John Smith', type: 'Consultation', status: 'upcoming' },
-                { time: '10:30 AM', patient: 'Sarah Johnson', type: 'Follow-up', status: 'upcoming' },
-                { time: '02:00 PM', patient: 'Mike Wilson', type: 'Online Consult', status: 'completed' },
-                { time: '03:30 PM', patient: 'Emma Davis', type: 'Check-up', status: 'upcoming' }
-              ].map((appointment, index) => (
-                <div key={index} className="flex items-center space-x-4 p-4 rounded-xl hover:bg-gray-50 transition-colors">
-                  <div className="bg-blue-100 p-3 rounded-lg">
-                    <Clock className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <p className="font-semibold text-gray-900">{appointment.patient}</p>
-                      <span className={`text-xs px-2 py-1 rounded-full ${
-                        appointment.status === 'completed' 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-blue-100 text-blue-800'
-                      }`}>
-                        {appointment.status}
-                      </span>
+              {todaysAppointments.length === 0 ? (
+                <div className="text-gray-500 text-center">No appointments scheduled for today.</div>
+              ) : (
+                todaysAppointments.map((appointment, index) => (
+                  <div key={index} className="flex items-center space-x-4 p-4 rounded-xl hover:bg-gray-50 transition-colors">
+                    <div className="bg-blue-100 p-3 rounded-lg">
+                      <Clock className="w-5 h-5 text-blue-600" />
                     </div>
-                    <p className="text-sm text-gray-600">{appointment.type}</p>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <p className="font-semibold text-gray-900">{appointment.patientName || appointment.patientId}</p>
+                        <span className={`text-xs px-2 py-1 rounded-full ${
+                          appointment.status === 'completed' 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-blue-100 text-blue-800'
+                        }`}>
+                          {appointment.status || 'upcoming'}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-600">{appointment.type || 'Consultation'}</p>
+                    </div>
+                    <div className="text-sm font-medium text-gray-500">
+                      {appointment.timeSlot || (appointment.date ? new Date(appointment.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--')}
+                    </div>
                   </div>
-                  <div className="text-sm font-medium text-gray-500">
-                    {appointment.time}
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </motion.div>
 
@@ -376,6 +356,8 @@ const DoctorDashboard: React.FC = () => {
                 <button
                   key={index}
                   className="flex items-center space-x-4 p-4 rounded-xl hover:bg-gray-50 transition-all duration-200 group text-left w-full"
+                  onClick={() => navigate(action.path)}
+                  type="button"
                 >
                   <div className={`${action.color} p-3 rounded-lg group-hover:scale-110 transition-transform duration-200`}>
                     <action.icon className="w-5 h-5 text-white" />

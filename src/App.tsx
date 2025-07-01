@@ -22,7 +22,6 @@ import AdminSettings from './pages/admin/AdminSettings';
 import DoctorDashboard from './pages/doctor/DoctorDashboard';
 import TimeSlots from './pages/doctor/TimeSlots';
 import Appointments from './pages/doctor/Appointments';
-import OnlineConsultations from './pages/doctor/OnlineConsultations';
 import DoctorProfile from './pages/doctor/DoctorProfile';
 
 // Protected Route Components
@@ -176,12 +175,6 @@ function App() {
             <Route path="/doctor/appointments" element={
               <DoctorRoute>
                 <Appointments />
-              </DoctorRoute>
-            } />
-
-            <Route path="/doctor/consult" element={
-              <DoctorRoute>
-                <OnlineConsultations />
               </DoctorRoute>
             } />
 

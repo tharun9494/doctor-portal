@@ -17,6 +17,7 @@ import {
   Activity
 } from 'lucide-react';
 import { useDoctorAuth } from '../../contexts/DoctorAuthContext';
+import { useAppointmentCounts } from '../../hooks/useAppointmentCounts';
 
 interface DoctorSidebarProps {
   isOpen: boolean;
@@ -26,6 +27,7 @@ interface DoctorSidebarProps {
 const DoctorSidebar: React.FC<DoctorSidebarProps> = ({ isOpen, onClose }) => {
   const location = useLocation();
   const { doctorUser, logoutDoctor } = useDoctorAuth();
+  const { counts } = useAppointmentCounts();
 
   const menuItems = [
     { 
@@ -47,15 +49,9 @@ const DoctorSidebar: React.FC<DoctorSidebarProps> = ({ isOpen, onClose }) => {
       label: 'Appointments', 
       path: '/doctor/appointments',
       description: 'View & Manage',
-      badge: '8'
+      badge: counts.pending > 0 ? counts.pending.toString() : null
     },
-    { 
-      icon: Video, 
-      label: 'Online Consult', 
-      path: '/doctor/consult',
-      description: 'Virtual Meetings',
-      badge: '2'
-    },
+    
     { 
       icon: User, 
       label: 'Profile', 
@@ -63,13 +59,7 @@ const DoctorSidebar: React.FC<DoctorSidebarProps> = ({ isOpen, onClose }) => {
       description: 'Personal Information',
       badge: null
     },
-    { 
-      icon: FileText, 
-      label: 'Medical Records', 
-      path: '/doctor/records',
-      description: 'Patient Records',
-      badge: null
-    },
+    
     { 
       icon: CreditCard, 
       label: 'Payments', 
@@ -143,6 +133,7 @@ interface SidebarContentProps {
   doctorUser: {
     name: string;
     specialization: string;
+    profileImage?: string;
   } | null;
   menuItems: Array<{
     icon: React.ElementType;
@@ -181,7 +172,19 @@ const SidebarContent: React.FC<SidebarContentProps> = ({ onClose, doctorUser, me
       {doctorUser && (
         <div className="mt-4 p-4 bg-white/10 rounded-lg backdrop-blur-sm">
           <div className="flex items-center space-x-3">
-            <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
+            {doctorUser.profileImage ? (
+              <img
+                src={doctorUser.profileImage}
+                alt="Profile"
+                className="w-12 h-12 rounded-full object-cover border-2 border-white/30"
+                onError={(e) => {
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = 'none';
+                  target.nextElementSibling?.classList.remove('hidden');
+                }}
+              />
+            ) : null}
+            <div className={`w-12 h-12 bg-white/20 rounded-full flex items-center justify-center ${doctorUser.profileImage ? 'hidden' : ''}`}>
               <User className="w-6 h-6 text-white" />
             </div>
             <div className="flex-1 min-w-0">

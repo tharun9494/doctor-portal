@@ -5,6 +5,7 @@ interface DoctorUser {
   name: string;
   specialization: string;
   email: string;
+  profileImage?: string;
 }
 
 interface DoctorAuthContextType {
